@@ -14,7 +14,7 @@ so that everything is more intelligible. Intelligiblity only emerges by virtue
 of a restriction on the possible states/transitions.
 """
 
-show_chars = [
+show_blocks = [
         (0.9, '█'),
         (0.8, '▇'),
         (0.7, '▆'),
@@ -23,11 +23,21 @@ show_chars = [
         (0.4, '▃'),
         (0.3, '▂'),
         (0.2, '▁'),
-        (-.1, '0'),
+        (-.1, ' '),
         ]
 
 def show(w):
-    return "[" + "".join("█" if x > .9 else " " for x in w) + "]"
+    return "[" + "".join("█" if x > .9 else " " for x in w[0]) + "]"
+
+def show_fancy(w):
+    def to_block(x):
+        for y, block in show_blocks:
+            if x > y: return block
+        return "X"
+    # get the first channel of w
+    return "[" + ''.join(to_block(x) for x in w[0]) + "]"
+
+
 
 def make_world(size):
     makers = [

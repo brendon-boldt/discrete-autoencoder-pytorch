@@ -61,7 +61,7 @@ class FrameCnn(nn.Module):
         self.maxunpool2 = nn.MaxUnpool1d(2)
         self.decoder3 = nn.Sequential(
                 nn.ConvTranspose1d(6, 1, 3, padding=1),
-                nn.Tanh())
+                nn.Sigmoid())
 
     def forward(self, x):
         x, mp_indices1 = self.encoder1(x)
@@ -110,7 +110,7 @@ def main():
             lr=1e-3,
             weight_decay=1e-5)
 
-    num_worlds = 1000
+    num_worlds = 10000
     world_size = 24
     batch_size = 10
     dataset = FrameCnnDataset(num_worlds, world_size)
@@ -126,7 +126,7 @@ def main():
             test_ds,
             batch_size=batch_size)
 
-    num_epochs = 20
+    num_epochs = 15
     for epoch in range(num_epochs):
         for batch in train_dl:
             output = model(batch)
@@ -135,13 +135,18 @@ def main():
             loss.backward()
             optimizer.step()
         print(f'epoch [{epoch+1}/{num_epochs}], '
-              f'loss: {batch_size*loss:.4f}')
+              f'loss: {loss:.4f}')
 
     avg_loss = 0
     for batch in test_dl:
         output = model(batch)
+        if avg_loss == 0: # shorthand for first batch
+            for i in range(len(batch)):
+                print(W.show_fancy(batch[i]))
+                print(W.show_fancy(output[i]))
+                print()
         loss = metric(output, batch)
-        avg_loss += loss * len(batch)/len(test_dl)
+        avg_loss += loss * len(batch)/(len(test_dl) * test_dl.batch_size)
 
     print(f'test loss: {avg_loss:.4f}')
     torch.save(model.state_dict(), './frame_cnn.pth')
