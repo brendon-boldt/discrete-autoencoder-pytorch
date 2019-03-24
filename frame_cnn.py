@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import Dataset
+import torch.utils.data as D
 import numpy as np
 
 
@@ -82,34 +82,23 @@ TODO
 - Dataset shuffling
 '''
 
-class FrameCnnDataset(Dataset):
+class FrameCnnDataset(D.Dataset):
     def __init__(
             self,
             size,
             world_size,
-            test_prop=8,
-            batch_size=10,
             valid=False):
-
+        # TODO Make sure there aren't duplicates
         self.data = [
                 W.make_world(world_size)
                 for _ in range(size)
                 ]
-        if valid:
-            pass
-        else:
-            self.valid = []
-
-    def shuffle_existing(old_ds):
-        # Take an existing dataset, shuffle the train, test, and valid
-        # and return a new one.
-        pass
 
     def __len__(self):
-        return len(self.train) + len(self.test) + len(self.valid)
+        return len(self.data)
 
     def __getitem__(self, i):
-        pass
+        return self.data[i]
 
     
 
@@ -121,24 +110,40 @@ def main():
             lr=1e-3,
             weight_decay=1e-5)
 
-    num_batches = 100
-    batch_size = 10
+    num_worlds = 1000
     world_size = 24
-    worlds = [
-            W.make_world_batch(world_size, batch_size)
-            for _ in range(num_batches)
-            ]
+    batch_size = 10
+    dataset = FrameCnnDataset(num_worlds, world_size)
+    test_size = len(dataset) // 5
+    train_ds, test_ds = D.random_split(
+            dataset,
+            [len(dataset) - test_size, test_size])
+    train_dl = D.DataLoader(
+            train_ds,
+            batch_size=batch_size,
+            shuffle=True)
+    test_dl = D.DataLoader(
+            test_ds,
+            batch_size=batch_size)
 
-    num_epochs = 40
+    num_epochs = 20
     for epoch in range(num_epochs):
-        for world in worlds:
-            output = model(world)
-            loss = metric(output, world)
+        for batch in train_dl:
+            output = model(batch)
+            loss = metric(output, batch)
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-        print(f'epoch [{epoch+1}/{num_epochs}], loss: {loss:.4f}')
+        print(f'epoch [{epoch+1}/{num_epochs}], '
+              f'loss: {batch_size*loss:.4f}')
 
+    avg_loss = 0
+    for batch in test_dl:
+        output = model(batch)
+        loss = metric(output, batch)
+        avg_loss += loss * len(batch)/len(test_dl)
+
+    print(f'test loss: {avg_loss:.4f}')
     torch.save(model.state_dict(), './frame_cnn.pth')
 
 
