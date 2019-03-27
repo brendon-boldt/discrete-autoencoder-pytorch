@@ -34,33 +34,47 @@ class FrameCnn(nn.Module):
     def __init__(self):
         super(FrameCnn, self).__init__()
         
+        in_size = (24,)
+        in_channels = 1
+        conv1_filters = 6
+        conv2_filters = 6
+        flat_size = conv2_filters * in_size[0] // 4
+        fc1_size = 36
+        hidden_size = 6
+        dropout_rate = 0.1
+
         # Batch normalization?
         self.encoder1 = nn.Sequential(
-                nn.Conv1d(1, 6, 3, padding=1),
+                nn.Conv1d(in_channels, conv1_filters, 3, padding=1),
                 nn.ReLU(True),
                 nn.MaxPool1d(2, return_indices=True))
         self.encoder2 = nn.Sequential(
-                nn.Conv1d(6, 6, 3, padding=1),
+                nn.Conv1d(conv1_filters, conv2_filters, 3, padding=1),
                 nn.ReLU(True),
                 nn.MaxPool1d(2, return_indices=True))
         self.encoder3 = nn.Sequential(
                 Flatten(),
-                nn.Linear(36, 36),
+                nn.Linear(flat_size, fc1_size),
                 nn.ReLU(True),
-                nn.Linear(36, 6))
+                nn.Linear(fc1_size, hidden_size),
+                nn.Dropout(dropout_rate, True),)
 
         self.decoder1 = nn.Sequential(
-                nn.Linear(6, 36),
+                nn.Linear(hidden_size, fc1_size),
                 nn.ReLU(True),
-                nn.Linear(36, 36),
-                Unflatten(6, 6),)
+                nn.Linear(fc1_size, flat_size),
+                Unflatten(conv2_filters, in_size[0] // 4),)
         self.maxunpool1 = nn.MaxUnpool1d(2)
         self.decoder2 = nn.Sequential(
-                nn.ConvTranspose1d(6, 6, 3, padding=1),
+                nn.ConvTranspose1d(
+                    conv2_filters,
+                    conv1_filters,
+                    3,
+                    padding=1),
                 nn.ReLU(True),) # a second relu?
         self.maxunpool2 = nn.MaxUnpool1d(2)
         self.decoder3 = nn.Sequential(
-                nn.ConvTranspose1d(6, 1, 3, padding=1),
+                nn.ConvTranspose1d(conv2_filters, in_channels, 3, padding=1),
                 nn.Sigmoid())
 
     def forward(self, x):
@@ -76,10 +90,8 @@ class FrameCnn(nn.Module):
 
 '''
 TODO
-- Generate test set
-- Visualization
+- Generate held-out test set
 - Dropout/sparsity/denoising
-- Dataset shuffling
 '''
 
 class FrameCnnDataset(D.Dataset):
@@ -88,11 +100,16 @@ class FrameCnnDataset(D.Dataset):
             size,
             world_size,
             valid=False):
-        # TODO Make sure there aren't duplicates
-        self.data = [
+        data = [
                 W.make_world(world_size)
                 for _ in range(size)
                 ]
+        data_dict = {
+                hash(str(x)): x
+                for x in data
+                }
+        self.data = list(data_dict.values())
+        print(f'actual data size: {len(self.data)}')
 
     def __len__(self):
         return len(self.data)
@@ -110,7 +127,7 @@ def main():
             lr=1e-3,
             weight_decay=1e-5)
 
-    num_worlds = 10000
+    num_worlds = 4000
     world_size = 24
     batch_size = 10
     dataset = FrameCnnDataset(num_worlds, world_size)
@@ -126,7 +143,7 @@ def main():
             test_ds,
             batch_size=batch_size)
 
-    num_epochs = 15
+    num_epochs = 100
     for epoch in range(num_epochs):
         for batch in train_dl:
             output = model(batch)
@@ -137,6 +154,7 @@ def main():
         print(f'epoch [{epoch+1}/{num_epochs}], '
               f'loss: {loss:.4f}')
 
+    model.eval()
     avg_loss = 0
     for batch in test_dl:
         output = model(batch)

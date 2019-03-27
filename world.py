@@ -39,14 +39,17 @@ def show_fancy(w):
 
 
 
+world_counter = -1
 def make_world(size):
     makers = [
             lambda: blob(size, 6),
             lambda: blob(size, 3),
             lambda: blob_pair(size, 3),
             ]
-    x = random.randint(0, len(makers) - 1)
-    return makers[x]()
+    #x = random.randint(0, len(makers) - 1)
+    global world_counter
+    world_counter += 1
+    return makers[world_counter % 3]()
 
 def blob(size, blob_size=6):
     w = torch.zeros(1, size)
