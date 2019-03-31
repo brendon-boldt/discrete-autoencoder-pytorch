@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.utils.data as D
 import numpy as np
+import random
 
 
 import world as W
@@ -41,7 +42,7 @@ class FrameCnn(nn.Module):
         flat_size = conv2_filters * in_size[0] // 4
         fc1_size = 36
         hidden_size = 6
-        dropout_rate = 0.1
+        dropout_rate = 0.2
 
         # Batch normalization?
         self.encoder1 = nn.Sequential(
@@ -90,32 +91,43 @@ class FrameCnn(nn.Module):
 
 '''
 TODO
-- Generate held-out test set
 - Dropout/sparsity/denoising
+ - Add Gaussian noise (or whatever is appropriate) to input?
 '''
 
+def make_datasets(world_size, train_prop=0.8):
+    data_dict = W.make_worlds(world_size)
+    min_size = min(len(v) for v in data_dict.values())
+    print(f"min_size:\t{min_size}")
+    print(f"total_size:\t{min_size*len(data_dict)}")
+    for k, v in data_dict.items():
+        data_dict[k] = random.sample(v, min_size)
+    
+    train_size = int(min_size * train_prop)
+    train_ds = FrameCnnDataset(
+            { k: v[:train_size] for k, v in data_dict.items() })
+    test_ds = FrameCnnDataset(
+            { k: v[train_size:] for k, v in data_dict.items() })
+    return train_ds, test_ds
+
 class FrameCnnDataset(D.Dataset):
-    def __init__(
-            self,
-            size,
-            world_size,
-            valid=False):
-        data = [
-                W.make_world(world_size)
-                for _ in range(size)
-                ]
-        data_dict = {
-                hash(str(x)): x
-                for x in data
-                }
-        self.data = list(data_dict.values())
-        print(f'actual data size: {len(self.data)}')
+    def __init__(self, data_dict):
+        """
+        Assumes that `data_dict` consists of equal length classes
+
+        """
+        self.data_dict = data_dict
+        # Make sure we have a consistently ordered list of keys 
+        self.keys = list(data_dict.keys())
+        self.list_len = len(data_dict[self.keys[0]])
 
     def __len__(self):
-        return len(self.data)
+        return sum(len(v) for v in self.data_dict.values())
 
     def __getitem__(self, i):
-        return self.data[i]
+        sub_collection = self.keys[i // self.list_len]
+        sub_index = i % self.list_len
+        return self.data_dict[sub_collection][sub_index].to_tensor()
 
     
 
@@ -127,23 +139,19 @@ def main():
             lr=1e-3,
             weight_decay=1e-5)
 
-    num_worlds = 4000
     world_size = 24
     batch_size = 10
-    dataset = FrameCnnDataset(num_worlds, world_size)
-    test_size = len(dataset) // 5
-    train_ds, test_ds = D.random_split(
-            dataset,
-            [len(dataset) - test_size, test_size])
+    train_ds, test_ds = make_datasets(world_size)
     train_dl = D.DataLoader(
             train_ds,
             batch_size=batch_size,
             shuffle=True)
     test_dl = D.DataLoader(
             test_ds,
-            batch_size=batch_size)
+            batch_size=batch_size,
+            shuffle=True)
 
-    num_epochs = 100
+    num_epochs = 40
     for epoch in range(num_epochs):
         for batch in train_dl:
             output = model(batch)

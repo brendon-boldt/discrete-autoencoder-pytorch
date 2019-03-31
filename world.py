@@ -14,6 +14,73 @@ so that everything is more intelligible. Intelligiblity only emerges by virtue
 of a restriction on the possible states/transitions.
 """
 
+class World1d:
+    def __init__(self, length, depth):
+        self.length = length
+        self.depth = depth
+        self.blobs = []
+
+    def to_tensor(self):
+        # TODO Lazy load this
+        t = torch.zeros(self.depth, self.length)
+        channel = 0
+        for x, sz in self.blobs:
+            for i in range(sz):
+                t[channel][i + x] = 1.
+        return t
+
+    def __str__(self):
+        return show_fancy(self.to_tensor())
+
+    def __hash__(self):
+        return hash(str(self.to_tensor()))
+
+    def __eq__(self, other):
+        return torch.eq(self.data, other.data).all()
+
+    #offset = random.randint(0, size - blob_size)
+
+def make_worlds(w_length):
+    d = {
+            'big_blob': [],
+            'small_blob': [],
+            'near_blobs': [],
+            'far_blobs': [],
+            }
+    # TODO If this gets too big, generate via random index ordering
+    for size in (6, 7, 8):
+        for x in range(0, w_length - size + 1):
+            w = World1d(w_length, 1)
+            w.blobs.append((x, size))
+            d['big_blob'].append(w)
+    for size in (3, 4):
+        for x in range(0, w_length - size + 1):
+            w = World1d(w_length, 1)
+            w.blobs.append((x, size))
+            d['small_blob'].append(w)
+
+    
+    for size1 in (3, 4):
+        for size2 in (3, 4):
+            for sep in (2, 3):
+                for x in range(0, w_length - (size1 + size2 + sep) + 1):
+                    w = World1d(w_length, 1)
+                    w.blobs.append((x, size1))
+                    w.blobs.append((x+size1+sep, size2))
+                    d['near_blobs'].append(w)
+    for size1 in (3, 4):
+        for size2 in (3, 4):
+            for sep in (5, 6):
+                for x in range(0, w_length - (size1 + size2 + sep) + 1):
+                    w = World1d(w_length, 1)
+                    w.blobs.append((x, size1))
+                    w.blobs.append((x+size1+sep, size2))
+                    d['far_blobs'].append(w)
+
+    # ? Do the selection here or elsewhere?
+    return d
+    
+
 show_blocks = [
         (0.9, '█'),
         (0.8, '▇'),
@@ -36,20 +103,6 @@ def show_fancy(w):
         return "X"
     # get the first channel of w
     return "[" + ''.join(to_block(x) for x in w[0]) + "]"
-
-
-
-world_counter = -1
-def make_world(size):
-    makers = [
-            lambda: blob(size, 6),
-            lambda: blob(size, 3),
-            lambda: blob_pair(size, 3),
-            ]
-    #x = random.randint(0, len(makers) - 1)
-    global world_counter
-    world_counter += 1
-    return makers[world_counter % 3]()
 
 def blob(size, blob_size=6):
     w = torch.zeros(1, size)
