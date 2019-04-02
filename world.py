@@ -3,16 +3,12 @@ import numpy as np
 import random
 
 """
-World Info
-- Small or big blob
-- One or two small blobs
-- One big blob
-- Translation
-
-Later, I will probably need to come up with a restriction on world transitions
-so that everything is more intelligible. Intelligiblity only emerges by virtue
-of a restriction on the possible states/transitions.
+World transition
 """
+
+class WorldPair:
+    def __init__(self):
+        pass
 
 class World1d:
     def __init__(self, length, depth):

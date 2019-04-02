@@ -31,6 +31,16 @@ class Unflatten(nn.Module):
     def forward(self, x):
         return x.view(x.size(0), *self.new_shape)
 
+class Noise(nn.Module):
+    def __init__(self, dist):
+        super(Noise, self).__init__()
+        self.dist = dist
+
+    def forward(self, x):
+        if self.training:
+            x += self.dist.sample(x.size()) - self.dist.mean
+        return x
+
 class FrameCnn(nn.Module):
     def __init__(self):
         super(FrameCnn, self).__init__()
@@ -41,11 +51,16 @@ class FrameCnn(nn.Module):
         conv2_filters = 6
         flat_size = conv2_filters * in_size[0] // 4
         fc1_size = 36
-        hidden_size = 6
+        hidden_size = 12
         dropout_rate = 0.2
 
         # Batch normalization?
         self.encoder1 = nn.Sequential(
+                #nn.Dropout(dropout_rate, True),
+                #Noise(torch.distributions.normal.Normal(0.0, 0.1)),
+                Noise(torch.distributions.half_normal.HalfNormal(0.2)),
+                #Noise(torch.distributions.bernoulli.Bernoulli(0.1)),
+                #Noise(torch.distributions.relaxed_bernoulli.RelaxedBernoulli(1,probs=0.1)),
                 nn.Conv1d(in_channels, conv1_filters, 3, padding=1),
                 nn.ReLU(True),
                 nn.MaxPool1d(2, return_indices=True))
@@ -57,8 +72,8 @@ class FrameCnn(nn.Module):
                 Flatten(),
                 nn.Linear(flat_size, fc1_size),
                 nn.ReLU(True),
-                nn.Linear(fc1_size, hidden_size),
-                nn.Dropout(dropout_rate, True),)
+                nn.Linear(fc1_size, hidden_size),)
+                #nn.Dropout(dropout_rate, True),)
 
         self.decoder1 = nn.Sequential(
                 nn.Linear(hidden_size, fc1_size),
@@ -134,6 +149,7 @@ class FrameCnnDataset(D.Dataset):
 def main():
     model = FrameCnn()
     metric = nn.MSELoss()
+    #metric = nn.L1Loss()
     optimizer = torch.optim.Adam(
             model.parameters(),
             lr=1e-3,
@@ -141,7 +157,7 @@ def main():
 
     world_size = 24
     batch_size = 10
-    train_ds, test_ds = make_datasets(world_size)
+    train_ds, test_ds = make_datasets(world_size, 0.8)
     train_dl = D.DataLoader(
             train_ds,
             batch_size=batch_size,
@@ -151,7 +167,7 @@ def main():
             batch_size=batch_size,
             shuffle=True)
 
-    num_epochs = 40
+    num_epochs = 60
     for epoch in range(num_epochs):
         for batch in train_dl:
             output = model(batch)
