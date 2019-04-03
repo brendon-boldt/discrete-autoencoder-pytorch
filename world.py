@@ -3,12 +3,19 @@ import numpy as np
 import random
 
 """
-World transition
+World transitions
+- big blob split/merge
+- single blob shrink-grow
+- translate left/right
 """
 
 class WorldPair:
-    def __init__(self):
-        pass
+    def __init__(self, first, second):
+        self.first = first
+        self.second = second
+
+    def to_tensor():
+        return torch.stack((self.first, self.second))
 
 class World1d:
     def __init__(self, length, depth):
@@ -34,7 +41,19 @@ class World1d:
     def __eq__(self, other):
         return torch.eq(self.data, other.data).all()
 
-    #offset = random.randint(0, size - blob_size)
+class BigBlob(World1d):
+    size_range = (6/24, 8.999/24)
+
+    def __init__(self, length, depth, x, size):
+        super(BigBlob, self).__init__(length, depth)
+        #x = max(min(1., x), 0.)
+        lo, hi = BigBlob.size_range
+        self.size = int((lo + (hi - lo) * size) * self.length)
+        right = (self.length - self.size)
+        self.x = int(right * x)
+        print(self.x)
+        print(self.size)
+        self.blobs.append((self.x, self.size))
 
 def make_worlds(w_length):
     d = {
