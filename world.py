@@ -41,19 +41,44 @@ class World1d:
     def __eq__(self, other):
         return torch.eq(self.data, other.data).all()
 
-class BigBlob(World1d):
-    size_range = (6/24, 8.999/24)
-
+class SingleBlob(World1d):
     def __init__(self, length, depth, x, size):
-        super(BigBlob, self).__init__(length, depth)
-        #x = max(min(1., x), 0.)
-        lo, hi = BigBlob.size_range
+        super(SingleBlob, self).__init__(length, depth)
+        lo, hi = self.size_range
         self.size = int((lo + (hi - lo) * size) * self.length)
         right = (self.length - self.size)
         self.x = int(right * x)
-        print(self.x)
-        print(self.size)
         self.blobs.append((self.x, self.size))
+
+class BigBlob(SingleBlob):
+    size_range = (6/24, 8.999/24)
+
+class SmallBlob(SingleBlob):
+    size_range = (3/24, 4.999/24)
+
+class DoubleBlob(World1d):
+    def __init__(self, length, depth, x, sizes, sep):
+        super(DoubleBlob, self).__init__(length, depth)
+        lo, hi = self.size_range
+        s_1 = int((lo + (hi - lo) * sizes[0]) * self.length)
+        s_2 = int((lo + (hi - lo) * sizes[1]) * self.length)
+        self.sizes = (s_1, s_2)
+        lo, hi = self.sep_range
+        self.sep = int((lo + (hi - lo) * sep) * self.length)
+        right = (self.length - sum(self.sizes) - self.sep)
+        self.x = int(right * x)
+        x_1 = self.x + self.sizes[0] + self.sep
+        self.blobs.append((self.x, self.sizes[0]))
+        self.blobs.append((x_1, self.sizes[1]))
+
+class FarBlobs(DoubleBlob):
+    size_range = (3/24, 4.999/24)
+    sep_range = (5/24, 6.999/24)
+
+class NearBlobs(DoubleBlob):
+    size_range = (3/24, 4.999/24)
+    sep_range = (2/24, 3.999/24)
+
 
 def make_worlds(w_length):
     d = {
