@@ -53,12 +53,13 @@ class FrameCnn(nn.Module):
         fc1_size = 36
         hidden_size = 12
         dropout_rate = 0.2
+        self.rohct = 10.
 
         # Batch normalization?
         self.encoder1 = nn.Sequential(
-                #nn.Dropout(dropout_rate, True),
+                nn.Dropout(dropout_rate, True),
                 #Noise(torch.distributions.normal.Normal(0.0, 0.1)),
-                Noise(torch.distributions.half_normal.HalfNormal(0.2)),
+                #Noise(torch.distributions.half_normal.HalfNormal(0.2)),
                 #Noise(torch.distributions.bernoulli.Bernoulli(0.1)),
                 #Noise(torch.distributions.relaxed_bernoulli.RelaxedBernoulli(1,probs=0.1)),
                 nn.Conv1d(in_channels, conv1_filters, 3, padding=1),
@@ -74,6 +75,8 @@ class FrameCnn(nn.Module):
                 nn.ReLU(True),
                 nn.Linear(fc1_size, hidden_size),)
                 #nn.Dropout(dropout_rate, True),)
+
+        #self.relaxed_categorical = torch.distributions.relaxed_categorical.RelaxedOneHotCategorical(torch.tensor([2.2])
 
         self.decoder1 = nn.Sequential(
                 nn.Linear(hidden_size, fc1_size),
@@ -97,6 +100,11 @@ class FrameCnn(nn.Module):
         x, mp_indices1 = self.encoder1(x)
         x, mp_indices2 = self.encoder2(x)
         x = self.encoder3(x)
+        if self.training:
+            x = torch.distributions.relaxed_categorical.RelaxedOneHotCategorical(torch.tensor([self.rohct]), logits=x).sample()
+        else:
+            s = x.shape
+            x = torch.zeros(s).scatter_(-1, x.argmax(-1).view(s[:-1] + (1,)), 1.)
         x = self.decoder1(x)
         x = self.maxunpool1(x, mp_indices2)
         x = self.decoder2(x)
@@ -144,7 +152,38 @@ class FrameCnnDataset(D.Dataset):
         sub_index = i % self.list_len
         return self.data_dict[sub_collection][sub_index].to_tensor()
 
-    
+
+# I guess we didn't need this -- good practice, though!
+class GumbelSoftmax(nn.Module):
+    def __init__(self):
+        super(GumbelSoftmax, self).__init__()
+        self.uni = torch.distributions.uniform.Uniform(1e-7, 1.)
+        # -1, right?
+        self.softmax = torch.nn.Softmax(dim=-1)
+
+    def forward(self, logits):
+        # How do I stop the gradient here? Do I need to?
+        if self.training:
+            logits = -torch.log(-torch.log(self.uni.sample(logits.shape))) + logits
+            return self.softmax(logits)
+        else:
+            l = logits
+            s = logits.shape
+            return torch.zeros(s).scatter_(-1, l.argmax(-1).view(s[:-1] + (1,)), 1.)
+
+def main_gs():
+    gs = GumbelSoftmax()
+    x = torch.tensor([
+        [[1., 0, 0], [1,0,1]],
+        [[0, 1, 0], [1,1,1]]
+    ])
+    y = gs.forward(x)
+    for _ in range(100):
+        y += gs.forward(x)
+    print(x)
+    print()
+    print(y)
+
 
 def main():
     model = FrameCnn()
@@ -167,7 +206,7 @@ def main():
             batch_size=batch_size,
             shuffle=True)
 
-    num_epochs = 60
+    num_epochs = 100#60
     for epoch in range(num_epochs):
         for batch in train_dl:
             output = model(batch)
@@ -175,6 +214,8 @@ def main():
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+
+            model.rohct *= (1 - 5e-2)
         print(f'epoch [{epoch+1}/{num_epochs}], '
               f'loss: {loss:.4f}')
 
@@ -195,4 +236,5 @@ def main():
 
 
 if __name__ == '__main__':
+    #main_gs()
     main()
