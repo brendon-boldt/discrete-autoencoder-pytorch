@@ -4,6 +4,7 @@ import torch.nn.functional as F
 import torch.utils.data as D
 import numpy as np
 import random
+from itertools import islice
 
 
 import world as W
@@ -70,12 +71,12 @@ class FrameCnn(nn.Module):
             # Noise(torch.distributions.relaxed_bernoulli.RelaxedBernoulli(1,probs=0.1)),
             nn.Conv1d(in_channels, conv1_filters, 5, padding=2),
             nn.ReLU(True),
-            nn.MaxPool1d(2, return_indices=True),
+            nn.MaxPool1d(2),
         )
         self.encoder2 = nn.Sequential(
             nn.Conv1d(conv1_filters, conv2_filters, 5, padding=2),
             nn.ReLU(True),
-            nn.MaxPool1d(2, return_indices=True),
+            nn.MaxPool1d(2),
         )
         self.encoder3 = nn.Sequential(
             Flatten(),
@@ -91,14 +92,17 @@ class FrameCnn(nn.Module):
             nn.Linear(fc1_size, flat_size),
             Unflatten(conv2_filters, in_size[0] // 4),
         )
-        self.maxunpool1 = nn.MaxUnpool1d(2)
         self.decoder2 = nn.Sequential(
-            nn.ConvTranspose1d(conv2_filters, conv1_filters, 3, padding=1),
+            nn.ConvTranspose1d(
+                conv2_filters, conv1_filters, 5, padding=2, stride=2, output_padding=1
+            ),
             nn.ReLU(True),
         )  # a second relu?
-        self.maxunpool2 = nn.MaxUnpool1d(2)
         self.decoder3 = nn.Sequential(
-            nn.ConvTranspose1d(conv2_filters, in_channels, 3, padding=1), nn.Sigmoid()
+            nn.ConvTranspose1d(
+                conv2_filters, in_channels, 5, padding=2, stride=2, output_padding=1
+            ),
+            nn.Sigmoid(),
         )
 
     def apply_rohc(self, x):
@@ -111,40 +115,29 @@ class FrameCnn(nn.Module):
             return torch.zeros(s).scatter_(-1, x.argmax(-1).view(s[:-1] + (1,)), 1.0)
 
     def encode(self, x):
-        x, mp_indices1 = self.encoder1(x)
-        x, mp_indices2 = self.encoder2(x)
+        x = self.encoder1(x)
+        x = self.encoder2(x)
         x = self.encoder3(x)
-        return x, mp_indices1, mp_indices2
+        return x
 
     def forward(self, x):
-        x, mp_indices1, mp_indices2 = self.encode(x)
+        x = self.encode(x)
         x = self.decoder1(x)
-        x = self.maxunpool1(x, mp_indices2)
         x = self.decoder2(x)
-        x = self.maxunpool2(x, mp_indices1)
         x = self.decoder3(x)
         return x
 
 
 class FCClassifier(nn.Module):
-    def __init__(self, frame_cnn):
-        ...
+    def __init__(self, frame_cnn, num_classes):
         super(FCClassifier, self).__init__()
         self.frame_cnn = frame_cnn
-        self.classifier = nn.Sequential(
-            nn.Linear(frame_cnn.hidden_size, num_classes), nn.Softmax()
-        )
+        self.classifier = nn.Sequential(nn.Linear(frame_cnn.hidden_size, num_classes))
         # Get rid of softmax for training?
 
     def forward(self, x):
-        x = self.frame_cnn.encode(x)[0]
-
-
-"""
-TODO
-- Dropout/sparsity/denoising
- - Add Gaussian noise (or whatever is appropriate) to input?
-"""
+        x = self.frame_cnn.encode(x)
+        return self.classifier(x)
 
 
 def make_datasets(world_size, train_prop=0.8):
@@ -181,9 +174,110 @@ class FrameCnnDataset(D.Dataset):
         return self.data_dict[sub_collection][sub_index].to_tensor()
 
 
+class FCClassifierDataset(D.Dataset):
+    def __init__(self, frame_cnn_dataset):
+        self.fc_dataset = frame_cnn_dataset
+        self.num_classes = len(frame_cnn_dataset.keys)
+
+    def __len__(self):
+        return len(self.fc_dataset)
+
+    def __getitem__(self, i):
+        # one_hot = torch.zeros((self.num_classes,))
+        # one_hot[i // self.fc_dataset.list_len] = 1.0
+        i // self.fc_dataset.list_len
+        return self.fc_dataset[i], i // self.fc_dataset.list_len
+
+
 class TwoFrameDataet(D.Dataset):
     def __init__(self, data_dict):
         ...
+
+
+def main_classifier():
+    ae_model = FrameCnn()
+    ae_metric = nn.MSELoss()
+    # metric = nn.L1Loss()
+    ae_optimizer = torch.optim.Adam(ae_model.parameters(), lr=1e-3)
+
+    world_size = 100  # 24
+    batch_size = 20
+    # TODO better sampling here; too many examples?
+    ae_train_ds, ae_test_ds = make_datasets(world_size, 0.8)
+    ae_train_dl = D.DataLoader(ae_train_ds, batch_size=batch_size, shuffle=True)
+    ae_test_dl = D.DataLoader(ae_test_ds, batch_size=batch_size, shuffle=True)
+
+    num_epochs = 10
+    for epoch in range(num_epochs):
+        losses = []
+        for batch in ae_train_dl:
+            output = ae_model(batch)
+            loss = ae_metric(output, batch)
+            losses.append(loss.detach().numpy())
+            ae_optimizer.zero_grad()
+            loss.backward()
+            ae_optimizer.step()
+
+        ae_model.rohct *= 1 - 5e-1
+        print(f"epoch [{epoch+1}/{num_epochs}], loss: {np.average(losses):.4f}")
+    ae_model.eval()
+
+    avg_loss = 0
+    for batch in ae_test_dl:
+        output = ae_model(batch)
+        if avg_loss == 0:  # shorthand for first batch
+           for i in range(len(batch)):
+               print(W.show_fancy(batch[i]))
+               print(W.show_fancy(output[i]))
+               print()
+        loss = ae_metric(output, batch)
+        avg_loss += loss * len(batch) / (len(ae_test_dl) * ae_test_dl.batch_size)
+
+    print(f"test loss: {avg_loss:.4f}")
+
+    # begin classifier code #
+
+    #for param in ae_model.parameters():
+    #    param.requires_grad = False
+    ae_model.train()
+
+    train_ds = FCClassifierDataset(ae_train_ds)
+    test_ds = FCClassifierDataset(ae_test_ds)
+
+    #ae_model = FrameCnn()
+    model = FCClassifier(ae_model, train_ds.num_classes)
+    #model = FCClassifier(FrameCnn(), train_ds.num_classes)
+    metric = nn.CrossEntropyLoss()
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+
+    train_dl = D.DataLoader(train_ds, batch_size=batch_size, shuffle=True)
+    test_dl = D.DataLoader(test_ds, batch_size=batch_size, shuffle=True)
+
+    num_epochs = 1
+    for epoch in range(num_epochs):
+        losses = []
+        for batch in islice(train_dl, len(train_dl) // 2):
+            output = model(batch[0])
+            loss = metric(output, batch[1])
+            losses.append(loss.detach().numpy())
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+        print(f"epoch [{epoch+1}/{num_epochs}], loss: {np.average(losses):.4f}")
+
+    model.eval()
+    avg_loss = 0
+    avg_acc = 0
+    for batch in test_dl:
+        output = model(batch[0])
+        loss = metric(output, batch[1])
+        acc = (output.argmax(dim=-1) == batch[1]).double().mean()
+        avg_acc += acc * len(batch[0]) / (len(test_dl) * test_dl.batch_size)
+        avg_loss += loss * len(batch[0]) / (len(test_dl) * test_dl.batch_size)
+
+    print(f"test acc: {avg_acc:.4f}\ttest loss: {avg_loss:.4f}")
+    # torch.save(model.state_dict(), "./models/frame_cnn.pth")
 
 
 def main():
@@ -226,8 +320,9 @@ def main():
         avg_loss += loss * len(batch) / (len(test_dl) * test_dl.batch_size)
 
     print(f"test loss: {avg_loss:.4f}")
-    torch.save(model.state_dict(), "./frame_cnn.pth")
+    torch.save(model.state_dict(), "./models/frame_cnn.pth")
 
 
 if __name__ == "__main__":
-    main()
+    # main()
+    main_classifier()
